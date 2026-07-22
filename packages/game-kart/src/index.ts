@@ -24,10 +24,12 @@ const MAX_SPEED = 900;
 const OFFROAD_SPEED = 250;
 const STRIPE_LEN = 220;
 
-/** Streckendesign: [Länge, Kurvenstärke]. Negativ = links. */
+/** Streckendesign: [Länge, Kurvenstärke]. Negativ = links. Runde ≈ 16,4 km. */
 const TRACK_SEGMENTS: [number, number][] = [
   [900, 0], [700, 1.2], [500, 0], [800, -1.6], [400, 0], [600, 0.8],
   [600, -0.8], [1000, 0], [700, 1.8], [500, 0], [600, -1.0], [700, 0],
+  [800, 0.6], [900, 0], [700, -1.4], [500, 0], [600, 1.0], [800, 0],
+  [600, -0.6], [900, 1.5], [400, 0], [700, -1.8], [600, 0], [900, 0],
 ];
 const TRACK_LENGTH = TRACK_SEGMENTS.reduce((s, [len]) => s + len, 0);
 
@@ -36,15 +38,21 @@ const ITEM_BOXES: { d: number; x: number }[] = [
   { d: 1100, x: -0.5 }, { d: 1160, x: 0 }, { d: 1220, x: 0.5 },
   { d: 3900, x: -0.4 }, { d: 3960, x: 0.4 },
   { d: 6200, x: -0.5 }, { d: 6260, x: 0 }, { d: 6320, x: 0.5 },
+  { d: 9500, x: -0.5 }, { d: 9560, x: 0 }, { d: 9620, x: 0.5 },
+  { d: 12300, x: -0.4 }, { d: 12360, x: 0.4 },
+  { d: 14800, x: -0.5 }, { d: 14860, x: 0 }, { d: 14920, x: 0.5 },
 ];
 const BOOST_PADS: { d: number; x: number }[] = [
   { d: 2900, x: 0 }, { d: 5300, x: -0.35 }, { d: 7300, x: 0.25 },
+  { d: 10400, x: 0 }, { d: 13500, x: 0.3 }, { d: 15600, x: -0.3 },
 ];
 
-/** Werbebanden am Streckenrand (White-Label-Werbefläche!). x: ±1 = Streckenrand. */
+/** Werbebanden am Streckenrand (White-Label-Werbefläche!). */
 const BILLBOARDS: { d: number; side: number }[] = [
   { d: 500, side: 1 }, { d: 1500, side: -1 }, { d: 2600, side: 1 },
   { d: 3600, side: -1 }, { d: 4800, side: 1 }, { d: 6000, side: -1 }, { d: 7100, side: 1 },
+  { d: 8600, side: -1 }, { d: 9800, side: 1 }, { d: 11000, side: -1 },
+  { d: 12400, side: 1 }, { d: 13600, side: -1 }, { d: 15000, side: 1 }, { d: 16000, side: -1 },
 ];
 
 type ItemKind = "turbo" | "shield" | "zap";
@@ -146,14 +154,14 @@ export class KartScene extends Phaser.Scene {
     this.road = this.add.graphics().setDepth(1);
     this.overlay = this.add.graphics().setDepth(5);
 
-    // KI-Gegner: gleiches Kart-Modell in drei Farbvarianten
+    // KI-Gegner: Startaufstellung sichtbar direkt vor dem Spieler (Rennstart-Grid)
     for (let i = 0; i < 3; i++) {
       const s = this.add.image(0, 0, `kart-opp-${i}`).setVisible(false).setDepth(4).setOrigin(0.5, 1);
       this.opponents.push({
-        dist: 120 + i * 60,
-        lateral: -0.4 + i * 0.4,
+        dist: 55 + i * 55,                        // gestaffeltes Grid, alle im Blickfeld
+        lateral: [-0.5, 0.5, 0][i],               // versetzt neben der Ideallinie
         speed: 0,
-        baseSpeed: MAX_SPEED * (0.78 + i * 0.05), // 702–792 < 900 → einholbar
+        baseSpeed: MAX_SPEED * (0.8 + i * 0.04),  // 720–792 < 900 → fair schlagbar
         slowUntil: 0,
         sprite: s,
       });
@@ -249,8 +257,9 @@ export class KartScene extends Phaser.Scene {
     return 0;
   }
 
+  /** Signierter Abstand Objekt↔Spieler, rundenzyklisch auf ±halbe Runde normiert. */
   private gapTo(objDist: number): number {
-    const raw = (((objDist - this.dist) % TRACK_LENGTH) + TRACK_LENGTH * 1.5) % TRACK_LENGTH;
+    const raw = (((objDist - this.dist) % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH; // 0..T
     return raw > TRACK_LENGTH / 2 ? raw - TRACK_LENGTH : raw;
   }
 
@@ -265,14 +274,31 @@ export class KartScene extends Phaser.Scene {
   /** Zeilen-Cache des aktuellen Frames (von renderRoad befüllt). */
   private rows: { z: number; center: number; w: number; p: number; y: number }[] = [];
   private horizonY = 0;
+  /** Höhe einer Renderzeile in px (fein = flüssige Sprite-Bewegung). */
+  private static readonly ROW_STEP = 2;
 
-  /** Nächstliegende gerenderte Fahrbahn-Zeile zu Abstand z. */
-  private rowFor(z: number) {
+  /**
+   * Weiche Projektion für Sprites: kontinuierliches y/p und zwischen den
+   * Renderzeilen INTERPOLIERTE Streckenmitte/-breite — kein Raster-Ruckeln.
+   */
+  private projectSmooth(z: number) {
     if (!this.rows.length) return null;
+    const { height } = this.scale;
     const p = NEAR / (NEAR + z);
-    const y = this.horizonY + (this.scale.height - this.horizonY) * p;
-    const idx = Math.floor((this.scale.height - y) / 3);
-    return this.rows[Math.min(this.rows.length - 1, Math.max(0, idx))];
+    const y = this.horizonY + (height - this.horizonY) * p;
+    const fidx = (height - y) / KartScene.ROW_STEP;
+    const i0 = Math.floor(fidx);
+    if (i0 < 0 || i0 >= this.rows.length) return null;
+    const i1 = Math.min(i0 + 1, this.rows.length - 1);
+    const t = Phaser.Math.Clamp(fidx - i0, 0, 1);
+    const a = this.rows[i0];
+    const b = this.rows[i1];
+    return {
+      p,
+      y,
+      center: a.center + (b.center - a.center) * t,
+      w: a.w + (b.w - a.w) * t,
+    };
   }
 
   // ── Hauptschleife ─────────────────────────────────────────────
@@ -351,12 +377,16 @@ export class KartScene extends Phaser.Scene {
     // KI-Gegner: moderates Rubber-Banding, blockiert Überholen nicht mehr
     for (const opp of this.opponents) {
       const gap = this.gapTo(opp.dist);
+      // Enges Pack-Racing: Feld bleibt beisammen → keine Überrundungen,
+      // Anzeige-Position und sichtbare Karts decken sich immer.
       let target = opp.baseSpeed;
-      if (gap < -500) target *= 1.1;  // hinter dem Spieler → aufholen
-      if (gap > 500) target *= 0.88;  // vor dem Spieler → bremsen (Feld bleibt sichtbar)
+      if (gap < -400) target *= 1.12; // hinter dem Spieler → aufholen
+      if (gap > 400) target *= 0.85;  // vor dem Spieler → bremsen
       if (now < opp.slowUntil) target *= 0.35;
       if (!racing && !this.finished) target = 0;
-      opp.speed = Phaser.Math.Linear(opp.speed, target, Math.min(1, 2 * dt));
+      // Beschleunigung wie beim Spieler (600/s) statt Sofort-Tempo → fairer Start
+      const dv = Phaser.Math.Clamp(target - opp.speed, -800 * dt, 600 * dt);
+      opp.speed = Math.max(0, opp.speed + dv);
       opp.dist += opp.speed * dt;
       const oppCurve = this.curveAt(opp.dist);
       opp.lateral = Phaser.Math.Linear(opp.lateral, Phaser.Math.Clamp(-oppCurve * 0.4, -0.6, 0.6), 0.5 * dt);
@@ -447,7 +477,7 @@ export class KartScene extends Phaser.Scene {
     const g = this.road;
     g.clear();
     const accent = Phaser.Display.Color.HexStringToColor(this.brand.colors.accent).color;
-    const step = 3;
+    const step = KartScene.ROW_STEP;
 
     const mix = (c1: number, c2: number, t: number) => {
       const r = ((c1 >> 16) & 255) + (((c2 >> 16) & 255) - ((c1 >> 16) & 255)) * t;
@@ -543,7 +573,7 @@ export class KartScene extends Phaser.Scene {
     for (let d = firstTree + DRAW_DIST; d >= firstTree; d -= 170) {
       const z = d - this.dist;
       if (z <= 10 || z > DRAW_DIST * 0.92 || ti >= this.treePool.length) continue;
-      const proj = this.rowFor(z);
+      const proj = this.projectSmooth(z);
       if (!proj) continue;
       const n = Math.floor(d / 170);
       const type = [0, 1, 2, 0, 2, 1, 2][n % 7]; // Laubbaum/Nadelbaum/Busch gemischt
@@ -569,7 +599,7 @@ export class KartScene extends Phaser.Scene {
       if (bi >= this.billboardPool.length) break;
       const gap = (((bb.d - lapPosB) % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
       if (gap <= 10 || gap > DRAW_DIST * 0.92) continue;
-      const proj = this.rowFor(gap);
+      const proj = this.projectSmooth(gap);
       if (!proj) continue;
       const img = this.billboardPool[bi++];
       img
@@ -586,7 +616,7 @@ export class KartScene extends Phaser.Scene {
       if (this.collectedBoxes.has(box.d)) continue;
       const gap = (((box.d - lapPos) % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
       if (gap <= 0 || gap > DRAW_DIST * 0.92) continue;
-      const proj = this.rowFor(gap);
+      const proj = this.projectSmooth(gap);
       if (!proj) continue;
       const y = proj.y;
       const x = proj.center + box.x * proj.w * 0.5;
@@ -611,7 +641,7 @@ export class KartScene extends Phaser.Scene {
         opp.sprite.setVisible(false);
         continue;
       }
-      const proj = this.rowFor(gap);
+      const proj = this.projectSmooth(gap);
       if (!proj) {
         opp.sprite.setVisible(false);
         continue;
