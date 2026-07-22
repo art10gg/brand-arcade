@@ -585,7 +585,8 @@ export class KartScene extends Phaser.Scene {
         .setTexture(`kart-tree-${type}`)
         .setVisible(true)
         .setPosition(proj.center + lateral * proj.w * 0.5, proj.y + 4)
-        .setDepth(1.5 + proj.p * 1.4);
+        .setDepth(1.5 + proj.p * 1.4)
+        .setAlpha(Phaser.Math.Clamp((DRAW_DIST * 0.92 - z) / 350, 0, 1)); // sanft einblenden
       img.setScale((baseH * proj.p) / img.height);
       ov.fillStyle(0x000000, 0.18 * proj.p);
       ov.fillEllipse(img.x, proj.y + 4, baseH * 0.5 * proj.p, baseH * 0.09 * proj.p);
@@ -605,7 +606,8 @@ export class KartScene extends Phaser.Scene {
       img
         .setVisible(true)
         .setPosition(proj.center + bb.side * 1.45 * proj.w * 0.5, proj.y + 4)
-        .setDepth(1.5 + proj.p * 1.4);
+        .setDepth(1.5 + proj.p * 1.4)
+        .setAlpha(Phaser.Math.Clamp((DRAW_DIST * 0.92 - gap) / 350, 0, 1)); // sanft einblenden
       img.setScale((240 * proj.p) / img.height);
     }
     for (let i = bi; i < this.billboardPool.length; i++) this.billboardPool[i].setVisible(false);

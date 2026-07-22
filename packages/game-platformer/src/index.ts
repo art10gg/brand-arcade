@@ -163,6 +163,13 @@ export class PlatformerScene extends Phaser.Scene {
     createAvatar(this, this.brand, "platformer");
     this.makeCloudTexture();
 
+    // Pixel-Look nur hier: knackige Tiles (NEAREST) + Kamera auf ganze Pixel
+    // (verhindert Haarlinien zwischen Tiles bei Subpixel-Scroll)
+    for (const key of ["k-tiles", "k-chars", "k-hills"]) {
+      this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST);
+    }
+    this.cameras.main.setRoundPixels(true);
+
     if (!this.anims.exists("enemy-walk")) {
       this.anims.create({
         key: "enemy-walk",

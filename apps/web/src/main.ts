@@ -40,7 +40,9 @@ function startGame(brand: BrandManifest, game: "platformer" | "kart") {
     width: 960,
     height: 600,
     scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-    pixelArt: true,
+    // KEIN globales pixelArt: es rundet alle Positionen auf ganze Pixel und
+    // lässt langsam bewegte Sprites (Kart-Szenerie) sichtbar ruckeln.
+    // Der Plattformer setzt Pixel-Look gezielt per NEAREST-Filter + Kamera-Rundung.
     physics: { default: "arcade", arcade: { gravity: { x: 0, y: 900 } } },
     backgroundColor: "#1b1b24",
   });
