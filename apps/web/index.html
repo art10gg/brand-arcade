@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#1b1b24" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="icon-192.png" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <title>Brand Arcade</title>
+    <style>
+      :root {
+        --brand-primary: #4a6cf7;
+        --brand-secondary: #1b1b24;
+        --brand-accent: #ffd447;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: system-ui, sans-serif;
+        background: var(--brand-secondary);
+        color: #fff;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      #menu { text-align: center; padding: 24px; }
+      #menu h1 { margin-bottom: 8px; }
+      #menu p { opacity: 0.7; margin-bottom: 24px; }
+      #menu button {
+        display: block;
+        width: 280px;
+        margin: 12px auto;
+        padding: 16px;
+        font-size: 18px;
+        border: none;
+        border-radius: 12px;
+        background: var(--brand-primary);
+        color: #fff;
+        cursor: pointer;
+      }
+      #menu button:active { transform: scale(0.97); }
+      #game { width: 100%; height: 100dvh; display: none; }
+      #game canvas { display: block; margin: 0 auto; }
+    </style>
+  </head>
+  <body>
+    <div id="menu">
+      <h1 id="brand-title">Brand Arcade</h1>
+      <p id="brand-sub">Wähle ein Spiel</p>
+      <button data-game="platformer">🏃 Jump'n'Run</button>
+      <button data-game="kart">🏎️ Kart-Rennen</button>
+    </div>
+    <div id="game"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

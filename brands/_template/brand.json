@@ -1,0 +1,40 @@
+{
+  "name": "TEMPLATE – Firmenname",
+  "colors": {
+    "primary": "#4a6cf7",
+    "secondary": "#1b1b24",
+    "accent": "#ffd447",
+    "avatar": "#4a6cf7"
+  },
+  "logo": "logo.png",
+  "avatar": {
+    "platformer": {
+      "file": "avatar/platformer.png",
+      "frameWidth": 64,
+      "frameHeight": 64,
+      "anims": {
+        "idle": [0, 3, 6],
+        "run": [4, 11, 14],
+        "jump": [12, 14, 10],
+        "fall": [15, 16, 8],
+        "hit": [17, 19, 10],
+        "win": [20, 25, 10]
+      }
+    },
+    "kart": {
+      "file": "avatar/kart.png",
+      "frameWidth": 96,
+      "frameHeight": 96,
+      "anims": {
+        "drive": [0, 3, 10],
+        "drift-left": [4, 6, 10],
+        "drift-right": [7, 9, 10],
+        "boost": [10, 13, 14],
+        "hit": [14, 16, 10]
+      }
+    }
+  },
+  "audio": {
+    "jingle": "audio/jingle.mp3"
+  }
+}

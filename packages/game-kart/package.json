@@ -1,0 +1,13 @@
+{
+  "name": "@platform/game-kart",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@platform/core": "*"
+  },
+  "peerDependencies": {
+    "phaser": "^3.80.0"
+  }
+}
