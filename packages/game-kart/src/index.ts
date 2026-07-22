@@ -41,6 +41,12 @@ const BOOST_PADS: { d: number; x: number }[] = [
   { d: 2900, x: 0 }, { d: 5300, x: -0.35 }, { d: 7300, x: 0.25 },
 ];
 
+/** Werbebanden am Streckenrand (White-Label-Werbefläche!). x: ±1 = Streckenrand. */
+const BILLBOARDS: { d: number; side: number }[] = [
+  { d: 500, side: 1 }, { d: 1500, side: -1 }, { d: 2600, side: 1 },
+  { d: 3600, side: -1 }, { d: 4800, side: 1 }, { d: 6000, side: -1 }, { d: 7100, side: 1 },
+];
+
 type ItemKind = "turbo" | "shield" | "zap";
 const ITEM_LABEL: Record<ItemKind, string> = { turbo: "🚀 Turbo", shield: "🛡 Schild", zap: "⚡ Blitz" };
 
@@ -82,6 +88,10 @@ export class KartScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Text;
   private itemHud!: Phaser.GameObjects.Text;
   private engine = new EngineSound();
+  private pano!: Phaser.GameObjects.TileSprite;
+  private bgScroll = 0;
+  private treePool: Phaser.GameObjects.Image[] = [];
+  private billboardPool: Phaser.GameObjects.Image[] = [];
 
   constructor() {
     super("kart");
@@ -94,11 +104,18 @@ export class KartScene extends Phaser.Scene {
     this.turboUntil = 0; this.shieldUntil = 0; this.driftCharge = 0;
     this.opponents = [];
     this.collectedBoxes.clear();
+    this.bgScroll = 0;
+    this.treePool = [];
+    this.billboardPool = [];
   }
 
   preload() {
     preloadAvatar(this, this.brand, "kart");
     preloadSfx(this, ["beep", "go", "item", "boost", "zap", "hit", "finish", "coin"]);
+    this.load.image("kart-pano", "assets/kart/panorama.jpg");
+    this.load.image("kart-tree-0", "assets/kart/tree-0.png");
+    this.load.image("kart-tree-1", "assets/kart/tree-1.png");
+    this.load.image("kart-tree-2", "assets/kart/tree-2.png");
     this.load.image("kart-opp-0", "assets/kart/opp-green.png");
     this.load.image("kart-opp-1", "assets/kart/opp-blue.png");
     this.load.image("kart-opp-2", "assets/kart/opp-purple.png");
@@ -109,23 +126,22 @@ export class KartScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const horizon = height * 0.42;
 
-    // Statischer Hintergrund: Himmel-Gradient + Sonne + zweistufige Hügel
-    const bg = this.add.graphics().setDepth(0);
-    bg.fillGradientStyle(0x5a9fd6, 0x5a9fd6, 0xc9e8f7, 0xc9e8f7, 1);
-    bg.fillRect(0, 0, width, horizon);
-    bg.fillStyle(0xfff3c4, 1);
-    bg.fillCircle(width * 0.78, horizon * 0.35, 30);
-    bg.fillStyle(0x9dc2dd, 1); // ferne Hügelkette
-    for (const [x, r] of [[width * 0.05, 60], [width * 0.22, 95], [width * 0.45, 70], [width * 0.68, 100], [width * 0.9, 75]]) {
-      bg.fillCircle(x, horizon, r);
+    // Gemaltes Panorama (KI-generiert, horizontal kachelbar) mit Kurven-Parallaxe
+    this.pano = this.add.tileSprite(width / 2, horizon / 2, width, horizon, "kart-pano").setDepth(0);
+    const panoTex = this.textures.get("kart-pano").getSourceImage();
+    const panoScale = horizon / panoTex.height;
+    this.pano.setTileScale(panoScale, panoScale);
+
+    // Werbebande in Markenfarben mit Markennamen (White-Label-Werbefläche)
+    this.makeBillboardTexture();
+
+    // Sprite-Pools für Streckendeko
+    for (let i = 0; i < 16; i++) {
+      this.treePool.push(this.add.image(0, 0, "kart-tree-0").setVisible(false).setOrigin(0.5, 1));
     }
-    bg.fillStyle(0x7fae8e, 1); // nahe, grünliche Hügel
-    for (const [x, r] of [[width * 0.12, 45], [width * 0.38, 65], [width * 0.62, 50], [width * 0.85, 60], [width * 1.02, 45]]) {
-      bg.fillCircle(x, horizon, r);
+    for (let i = 0; i < 6; i++) {
+      this.billboardPool.push(this.add.image(0, 0, "billboard").setVisible(false).setOrigin(0.5, 1));
     }
-    // Dunstband direkt über dem Horizont
-    bg.fillGradientStyle(0xc9e8f7, 0xc9e8f7, 0xc9e8f7, 0xc9e8f7, 0.0, 0.0, 0.9, 0.9);
-    bg.fillRect(0, horizon - 26, width, 26);
 
     this.road = this.add.graphics().setDepth(1);
     this.overlay = this.add.graphics().setDepth(5);
@@ -183,6 +199,31 @@ export class KartScene extends Phaser.Scene {
         else { cd.setText("LOS!"); sfx(this, "go", 0.5); this.time.delayedCall(600, () => cd.destroy()); }
       },
     });
+  }
+
+  /** Bande: weißer Rahmen, Fläche in Markenfarbe, Markenname — auf Holzpfosten. */
+  private makeBillboardTexture(): void {
+    if (this.textures.exists("billboard")) this.textures.remove("billboard");
+    const w = 260, h = 170, boardH = 120;
+    const rt = this.make.renderTexture({ width: w, height: h }, false);
+    const g = this.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0x7a5230, 1);
+    g.fillRect(34, boardH - 6, 18, h - boardH + 6);
+    g.fillRect(w - 52, boardH - 6, 18, h - boardH + 6);
+    g.fillStyle(0xffffff, 1);
+    g.fillRoundedRect(0, 0, w, boardH, 12);
+    g.fillStyle(Phaser.Display.Color.HexStringToColor(this.brand.colors.primary).color, 1);
+    g.fillRoundedRect(9, 9, w - 18, boardH - 18, 8);
+    rt.draw(g, 0, 0);
+    const txt = this.make.text({
+      x: 0, y: 0, text: this.brand.name,
+      style: { fontFamily: "system-ui, sans-serif", fontSize: "36px", fontStyle: "bold", color: "#ffffff" },
+    }, false).setOrigin(0.5);
+    rt.draw(txt, w / 2, boardH / 2);
+    rt.saveTexture("billboard");
+    txt.destroy();
+    g.destroy();
+    rt.destroy();
   }
 
   // ── Strecken-Mathematik ───────────────────────────────────────
@@ -334,6 +375,11 @@ export class KartScene extends Phaser.Scene {
     }
 
     this.engine.update(this.finished ? 0 : this.speed / MAX_SPEED, boosting);
+
+    // Panorama-Parallaxe: Hintergrund wandert in Kurven gegenläufig mit
+    this.bgScroll += curve * this.speed * dt * 0.06;
+    this.pano.tilePositionX = this.bgScroll + this.playerX * 14;
+
     this.renderRoad(width, height, horizon, curve, now);
 
     // Kart & HUD
@@ -409,7 +455,8 @@ export class KartScene extends Phaser.Scene {
       const b = (c1 & 255) + ((c2 & 255) - (c1 & 255)) * t;
       return (Math.round(r) << 16) | (Math.round(gg) << 8) | Math.round(b);
     };
-    const HAZE = 0xc9e8f7;
+    const GRASS_FAR = 0x89bb3d; // Bodenfarbe des Panoramas → nahtloser Übergang
+    const HAZE = 0x93ab84;      // Dunst für Fahrbahn/Curbs: entsättigtes Graugrün
 
     // Kurve wird über die Distanz INTEGRIERT (OutRun-Verfahren):
     // dadurch biegt die Straße stetig ab, statt an Segmentgrenzen zu zerreißen.
@@ -423,8 +470,8 @@ export class KartScene extends Phaser.Scene {
       const p = (y - horizon) / (height - horizon); // 1 = unten/nah
       const z = NEAR * (1 - p) / p;
       if (z >= DRAW_DIST) {
-        // Jenseits der Sichtweite: nur Dunst — keine Projektions-Artefakte
-        g.fillStyle(mix(0x3f9e4d, HAZE, 0.75), 1);
+        // Jenseits der Sichtweite: Panorama-Bodenfarbe — keine Projektions-Artefakte
+        g.fillStyle(GRASS_FAR, 1);
         g.fillRect(0, y - step, width, step);
         continue;
       }
@@ -445,7 +492,7 @@ export class KartScene extends Phaser.Scene {
       this.rows.push({ z, center: proj.center, w: proj.w, p, y });
 
       // Gras: dezente zweifarbige Streifen → Geschwindigkeitsgefühl
-      g.fillStyle(mix(stripe ? 0x3f9e4d : 0x3a9848, HAZE, fog), 1);
+      g.fillStyle(mix(stripe ? 0x5aa844 : 0x52a13e, GRASS_FAR, fog), 1);
       g.fillRect(0, y - step, width, step);
 
       // Fahrbahn (Start/Ziel als Schachbrett-Band)
@@ -458,12 +505,16 @@ export class KartScene extends Phaser.Scene {
           g.fillRect(proj.center - proj.w / 2 + c * cw, y - step, cw, step);
         }
       } else {
-        g.fillStyle(mix(stripe ? 0x4a4a55 : 0x50505c, HAZE, fog), 1);
+        // Asphalt mit leichtem Struktur-Rauschen (wirkt texturiert statt flach)
+        const noise = Math.abs(Math.sin(rowDist * 12.9898) * 43758.5453 % 1);
+        const asphalt = mix(stripe ? 0x4a4a55 : 0x50505c, 0x33333d, noise * 0.3);
+        g.fillStyle(mix(asphalt, HAZE, fog), 1);
         g.fillRect(proj.center - proj.w / 2, y - step, proj.w, step);
-        // Mittellinie gestrichelt
+        // Zwei gestrichelte Fahrspur-Linien
         if (stripe) {
-          g.fillStyle(mix(0xe8e8e8, HAZE, fog), 0.8);
-          g.fillRect(proj.center - proj.w * 0.006, y - step, proj.w * 0.012, step);
+          g.fillStyle(mix(0xe8e8e8, HAZE, fog), 0.75);
+          g.fillRect(proj.center - proj.w * 0.27 - proj.w * 0.006, y - step, proj.w * 0.012, step);
+          g.fillRect(proj.center + proj.w * 0.27 - proj.w * 0.006, y - step, proj.w * 0.012, step);
         }
       }
 
@@ -486,26 +537,48 @@ export class KartScene extends Phaser.Scene {
     const ov = this.overlay;
     ov.clear();
 
-    // Bäume am Streckenrand
-    const firstTree = Math.ceil(this.dist / 180) * 180;
-    for (let d = firstTree + DRAW_DIST; d >= firstTree; d -= 180) {
+    // Bäume/Büsche am Streckenrand: KI-Sprites aus dem Pool, perspektivisch skaliert
+    let ti = 0;
+    const firstTree = Math.ceil(this.dist / 170) * 170;
+    for (let d = firstTree + DRAW_DIST; d >= firstTree; d -= 170) {
       const z = d - this.dist;
-      if (z <= 10 || z > DRAW_DIST * 0.92) continue;
+      if (z <= 10 || z > DRAW_DIST * 0.92 || ti >= this.treePool.length) continue;
       const proj = this.rowFor(z);
       if (!proj) continue;
-      const y = proj.y;
-      const side = Math.floor(d / 180) % 2 === 0 ? -1 : 1;
-      const x = proj.center + side * (proj.w / 2 + proj.w * 0.45);
-      const s = proj.p * 1.9; // größer → Geschwindigkeit besser spürbar
-      ov.fillStyle(0x000000, 0.2 * proj.p);
-      ov.fillEllipse(x, y, 46 * s, 10 * s);
-      ov.fillStyle(0x6b4a2b, 1);
-      ov.fillRect(x - 5 * s, y - 40 * s, 10 * s, 40 * s);
-      ov.fillStyle(0x2e7d43, 1);
-      ov.fillCircle(x, y - 58 * s, 26 * s);
-      ov.fillStyle(0x3c9955, 1);
-      ov.fillCircle(x - 10 * s, y - 50 * s, 16 * s);
+      const n = Math.floor(d / 170);
+      const type = [0, 1, 2, 0, 2, 1, 2][n % 7]; // Laubbaum/Nadelbaum/Busch gemischt
+      const side = n % 2 === 0 ? -1 : 1;
+      const lateral = side * (1.35 + ((n * 7) % 4) * 0.22);
+      const baseH = type === 2 ? 120 : 300; // Büsche kleiner als Bäume
+      const img = this.treePool[ti++];
+      img
+        .setTexture(`kart-tree-${type}`)
+        .setVisible(true)
+        .setPosition(proj.center + lateral * proj.w * 0.5, proj.y + 4)
+        .setDepth(1.5 + proj.p * 1.4);
+      img.setScale((baseH * proj.p) / img.height);
+      ov.fillStyle(0x000000, 0.18 * proj.p);
+      ov.fillEllipse(img.x, proj.y + 4, baseH * 0.5 * proj.p, baseH * 0.09 * proj.p);
     }
+    for (let i = ti; i < this.treePool.length; i++) this.treePool[i].setVisible(false);
+
+    // Werbebanden in Markenfarbe (im Pitch: „Hier steht Ihr Logo")
+    let bi = 0;
+    const lapPosB = ((this.dist % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
+    for (const bb of BILLBOARDS) {
+      if (bi >= this.billboardPool.length) break;
+      const gap = (((bb.d - lapPosB) % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
+      if (gap <= 10 || gap > DRAW_DIST * 0.92) continue;
+      const proj = this.rowFor(gap);
+      if (!proj) continue;
+      const img = this.billboardPool[bi++];
+      img
+        .setVisible(true)
+        .setPosition(proj.center + bb.side * 1.45 * proj.w * 0.5, proj.y + 4)
+        .setDepth(1.5 + proj.p * 1.4);
+      img.setScale((240 * proj.p) / img.height);
+    }
+    for (let i = bi; i < this.billboardPool.length; i++) this.billboardPool[i].setVisible(false);
 
     // Item-Boxen als pulsierende Rauten
     const lapPos = ((this.dist % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
