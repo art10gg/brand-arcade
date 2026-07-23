@@ -1,0 +1,36 @@
+{
+  "name": "Foxy Demo",
+  "colors": {
+    "primary": "#f57c1f",
+    "secondary": "#16213e",
+    "accent": "#ffd447",
+    "avatar": "#f57c1f"
+  },
+  "avatar": {
+    "platformer": {
+      "file": "avatar/platformer.png",
+      "frameWidth": 64,
+      "frameHeight": 64,
+      "anims": {
+        "idle": [0, 0, 6],
+        "run": [1, 4, 12],
+        "jump": [5, 5, 6],
+        "fall": [5, 5, 6],
+        "hit": [0, 0, 6],
+        "win": [1, 4, 12]
+      }
+    },
+    "kart": {
+      "file": "avatar/kart.png",
+      "frameWidth": 128,
+      "frameHeight": 128,
+      "anims": {
+        "drive": [0, 0, 6],
+        "drift-left": [0, 0, 6],
+        "drift-right": [0, 0, 6],
+        "boost": [0, 0, 6],
+        "hit": [0, 0, 6]
+      }
+    }
+  }
+}

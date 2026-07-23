@@ -1,0 +1,6 @@
+Enthaltene Drittanbieter-Assets:
+
+- Kenney "Pixel Platformer" (kenney.nl) - Lizenz: CC0 1.0 Universal (Public Domain)
+  Quelle: https://kenney.nl/assets/pixel-platformer
+
+- Kenney "Digital Audio" + "Music Jingles" (kenney.nl) - Lizenz: CC0 1.0
