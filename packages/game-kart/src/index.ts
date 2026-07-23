@@ -6,15 +6,22 @@ import {
   createAvatar,
   playAvatarAnim,
   preloadAvatar,
+  preloadMusic,
   preloadSfx,
+  playMusic,
   sfx,
 } from "@platform/core";
 
 /**
  * Kart-Racer im SuperTuxKart-Stil, Pseudo-3D:
- * - Perspektivisch korrekte Projektion (z = NEAR·(1-p)/p) → kein Streifen-Flackern
- * - Strecke aus Segmenten, 3 Runden, 3 KI-Gegner, Items, Boost-Pads, Drift
- * - Optik: Himmel-Gradient, Hügel-Silhouette, Bäume am Streckenrand, Kart-Schatten
+ * - Perspektivisch korrekte Projektion (z = NEAR·(1-p)/p) über eine fein und
+ *   gleichmäßig in Weltdistanz gesampelte Kurven-Tabelle → keine Ruckler,
+ *   auch nicht bei weit entfernten Objekten (Bäume/Banden/Panorama).
+ * - Mehrere wählbare Rennstrecken (Landschaften), je mit eigenem Panorama,
+ *   Streckenverlauf und Bodenfarbe.
+ * - 3 Runden, 3 KI-Gegner im Pack, deterministische Power-up-Boxen (das
+ *   Icon in der Box zeigt, was man bekommt), Boost-Pads mit klaren
+ *   Pfeil-Markierungen, Drift-Mini-Turbo, Werbebanden im Markendesign.
  */
 
 const DRAW_DIST = 2600;
@@ -24,39 +31,106 @@ const MAX_SPEED = 900;
 const OFFROAD_SPEED = 250;
 const STRIPE_LEN = 220;
 
-/** Streckendesign: [Länge, Kurvenstärke]. Negativ = links. Runde ≈ 16,4 km. */
-const TRACK_SEGMENTS: [number, number][] = [
-  [900, 0], [700, 1.2], [500, 0], [800, -1.6], [400, 0], [600, 0.8],
-  [600, -0.8], [1000, 0], [700, 1.8], [500, 0], [600, -1.0], [700, 0],
-  [800, 0.6], [900, 0], [700, -1.4], [500, 0], [600, 1.0], [800, 0],
-  [600, -0.6], [900, 1.5], [400, 0], [700, -1.8], [600, 0], [900, 0],
-];
-const TRACK_LENGTH = TRACK_SEGMENTS.reduce((s, [len]) => s + len, 0);
-
-/** Lateral-Einheit: -1 = linker Streckenrand, +1 = rechter Streckenrand. */
-const ITEM_BOXES: { d: number; x: number }[] = [
-  { d: 1100, x: -0.5 }, { d: 1160, x: 0 }, { d: 1220, x: 0.5 },
-  { d: 3900, x: -0.4 }, { d: 3960, x: 0.4 },
-  { d: 6200, x: -0.5 }, { d: 6260, x: 0 }, { d: 6320, x: 0.5 },
-  { d: 9500, x: -0.5 }, { d: 9560, x: 0 }, { d: 9620, x: 0.5 },
-  { d: 12300, x: -0.4 }, { d: 12360, x: 0.4 },
-  { d: 14800, x: -0.5 }, { d: 14860, x: 0 }, { d: 14920, x: 0.5 },
-];
-const BOOST_PADS: { d: number; x: number }[] = [
-  { d: 2900, x: 0 }, { d: 5300, x: -0.35 }, { d: 7300, x: 0.25 },
-  { d: 10400, x: 0 }, { d: 13500, x: 0.3 }, { d: 15600, x: -0.3 },
-];
-
-/** Werbebanden am Streckenrand (White-Label-Werbefläche!). */
-const BILLBOARDS: { d: number; side: number }[] = [
-  { d: 500, side: 1 }, { d: 1500, side: -1 }, { d: 2600, side: 1 },
-  { d: 3600, side: -1 }, { d: 4800, side: 1 }, { d: 6000, side: -1 }, { d: 7100, side: 1 },
-  { d: 8600, side: -1 }, { d: 9800, side: 1 }, { d: 11000, side: -1 },
-  { d: 12400, side: 1 }, { d: 13600, side: -1 }, { d: 15000, side: 1 }, { d: 16000, side: -1 },
-];
-
 type ItemKind = "turbo" | "shield" | "zap";
 const ITEM_LABEL: Record<ItemKind, string> = { turbo: "🚀 Turbo", shield: "🛡 Schild", zap: "⚡ Blitz" };
+const ITEM_KINDS: ItemKind[] = ["turbo", "shield", "zap"];
+
+interface TreeDef {
+  key: string;   // Textur-Key
+  file: string;  // Pfad relativ zu assets/kart/
+  height: number; // Zielhöhe in Weltpixeln (nah)
+}
+
+export interface TrackDef {
+  id: string;
+  name: string;
+  /** [Länge, Kurvenstärke]. Negativ = links. */
+  segments: [number, number][];
+  groundColor: number; // aus dem Panorama gesampelte Bodenfarbe, für nahtlosen Übergang
+  panoramaKey: string;
+  panoramaFile: string;
+  trees: TreeDef[];
+}
+
+export const TRACKS: TrackDef[] = [
+  {
+    id: "meadow",
+    name: "Grüne Hügel",
+    groundColor: 0x89bb3d,
+    panoramaKey: "kart-pano-meadow",
+    panoramaFile: "assets/kart/panorama.jpg",
+    trees: [
+      { key: "kart-tree-0", file: "assets/kart/tree-0.png", height: 300 },
+      { key: "kart-tree-1", file: "assets/kart/tree-1.png", height: 300 },
+      { key: "kart-tree-2", file: "assets/kart/tree-2.png", height: 120 },
+    ],
+    segments: [
+      [900, 0], [700, 1.2], [500, 0], [800, -1.6], [400, 0], [600, 0.8],
+      [600, -0.8], [1000, 0], [700, 1.8], [500, 0], [600, -1.0], [700, 0],
+      [800, 0.6], [900, 0], [700, -1.4], [500, 0], [600, 1.0], [800, 0],
+      [600, -0.6], [900, 1.5], [400, 0], [700, -1.8], [600, 0], [900, 0],
+    ],
+  },
+  {
+    id: "desert",
+    name: "Wüstencanyon",
+    groundColor: 0xc64726,
+    panoramaKey: "kart-pano-desert",
+    panoramaFile: "assets/kart/panorama-desert.jpg",
+    trees: [
+      { key: "kart-tree-desert-0", file: "assets/kart/tree-desert-0.png", height: 260 },
+      { key: "kart-tree-desert-1", file: "assets/kart/tree-desert-1.png", height: 170 },
+    ],
+    segments: [
+      [900, 0], [1000, 1.0], [700, 0], [900, -1.3], [600, 0], [1100, 0.7],
+      [500, 0], [800, -1.0], [900, 0], [700, 1.6], [600, 0], [1000, -0.9],
+      [800, 0], [900, 1.2], [600, 0], [700, -1.5], [900, 0],
+    ],
+  },
+  {
+    id: "snow",
+    name: "Schneepiste",
+    groundColor: 0xe1f0f7,
+    panoramaKey: "kart-pano-snow",
+    panoramaFile: "assets/kart/panorama-snow.jpg",
+    trees: [{ key: "kart-tree-1", file: "assets/kart/tree-1.png", height: 280 }],
+    segments: [
+      [700, 0], [500, 1.5], [400, -1.5], [500, 1.3], [400, -1.3], [600, 0],
+      [500, 1.8], [400, -1.8], [500, 1.4], [400, -1.4], [700, 0], [600, 1.0],
+      [500, -1.0], [600, 0], [700, 0], [500, 1.6], [400, -1.6], [600, 0],
+    ],
+  },
+];
+
+interface ItemBoxDef { d: number; x: number; kind: ItemKind }
+interface BoostPadDef { d: number; x: number }
+interface BillboardDef { d: number; side: number }
+
+/**
+ * Streckenobjekte (Item-Boxen, Boost-Pads, Werbebanden) werden aus Anteilen
+ * der Rundenlänge generiert — dadurch funktioniert jede Strecke unabhängig
+ * von ihrer genauen Länge, ohne Objekte von Hand pro Strecke zu pflegen.
+ */
+function buildTrackObjects(length: number) {
+  const items: ItemBoxDef[] = [];
+  const clusterCount = 6;
+  for (let i = 0; i < clusterCount; i++) {
+    const base = (length * (i + 0.5)) / clusterCount;
+    const kind = ITEM_KINDS[i % ITEM_KINDS.length];
+    [-0.5, 0, 0.5].forEach((x, j) => items.push({ d: (base + j * 60) % length, x, kind }));
+  }
+  const boosts: BoostPadDef[] = [];
+  const boostCount = 4;
+  for (let i = 0; i < boostCount; i++) {
+    boosts.push({ d: (length * (i + 0.7)) / boostCount % length, x: i % 2 === 0 ? -0.3 : 0.3 });
+  }
+  const billboards: BillboardDef[] = [];
+  const billboardCount = Math.max(6, Math.round(length / 1200));
+  for (let i = 0; i < billboardCount; i++) {
+    billboards.push({ d: (length * (i + 0.3)) / billboardCount % length, side: i % 2 === 0 ? 1 : -1 });
+  }
+  return { items, boosts, billboards };
+}
 
 interface Opponent {
   dist: number;
@@ -69,6 +143,12 @@ interface Opponent {
 
 export class KartScene extends Phaser.Scene {
   private brand!: BrandManifest;
+  private track!: TrackDef;
+  private trackLength = 0;
+  private itemBoxes: ItemBoxDef[] = [];
+  private boostPads: BoostPadDef[] = [];
+  private billboards: BillboardDef[] = [];
+
   private kart!: Phaser.GameObjects.Sprite;
   private kartShadow!: Phaser.GameObjects.Ellipse;
   private road!: Phaser.GameObjects.Graphics;
@@ -100,13 +180,21 @@ export class KartScene extends Phaser.Scene {
   private bgScroll = 0;
   private treePool: Phaser.GameObjects.Image[] = [];
   private billboardPool: Phaser.GameObjects.Image[] = [];
+  private itemIconPool: Phaser.GameObjects.Image[] = [];
 
   constructor() {
     super("kart");
   }
 
-  init(data: { brand?: BrandManifest }) {
+  init(data: { brand?: BrandManifest; trackId?: string }) {
     if (data.brand) this.brand = data.brand;
+    this.track = TRACKS.find((t) => t.id === data.trackId) ?? TRACKS[0];
+    this.trackLength = this.track.segments.reduce((s, [len]) => s + len, 0);
+    const built = buildTrackObjects(this.trackLength);
+    this.itemBoxes = built.items;
+    this.boostPads = built.boosts;
+    this.billboards = built.billboards;
+
     this.dist = 0; this.prevDist = 0; this.speed = 0; this.playerX = 0;
     this.lap = 1; this.finished = false; this.item = null;
     this.turboUntil = 0; this.shieldUntil = 0; this.driftCharge = 0;
@@ -115,15 +203,22 @@ export class KartScene extends Phaser.Scene {
     this.bgScroll = 0;
     this.treePool = [];
     this.billboardPool = [];
+    this.itemIconPool = [];
   }
 
   preload() {
     preloadAvatar(this, this.brand, "kart");
     preloadSfx(this, ["beep", "go", "item", "boost", "zap", "hit", "finish", "coin"]);
-    this.load.image("kart-pano", "assets/kart/panorama.jpg");
-    this.load.image("kart-tree-0", "assets/kart/tree-0.png");
-    this.load.image("kart-tree-1", "assets/kart/tree-1.png");
-    this.load.image("kart-tree-2", "assets/kart/tree-2.png");
+    preloadMusic(this, "kart");
+    // Alle Strecken-Assets werden geladen (klein, kommen dem Offline-Cache
+    // zugute — jeder Vault-Besuch cacht damit gleich alle Landschaften).
+    for (const t of TRACKS) {
+      this.load.image(t.panoramaKey, t.panoramaFile);
+      for (const tree of t.trees) this.load.image(tree.key, tree.file);
+    }
+    this.load.image("icon-turbo", "assets/kart/icons/turbo.png");
+    this.load.image("icon-shield", "assets/kart/icons/shield.png");
+    this.load.image("icon-zap", "assets/kart/icons/zap.png");
     this.load.image("kart-opp-0", "assets/kart/opp-green.png");
     this.load.image("kart-opp-1", "assets/kart/opp-blue.png");
     this.load.image("kart-opp-2", "assets/kart/opp-purple.png");
@@ -134,9 +229,9 @@ export class KartScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const horizon = height * 0.42;
 
-    // Gemaltes Panorama (KI-generiert, horizontal kachelbar) mit Kurven-Parallaxe
-    this.pano = this.add.tileSprite(width / 2, horizon / 2, width, horizon, "kart-pano").setDepth(0);
-    const panoTex = this.textures.get("kart-pano").getSourceImage();
+    // Gemaltes Panorama der gewählten Strecke (KI-generiert, kachelbar) mit Kurven-Parallaxe
+    this.pano = this.add.tileSprite(width / 2, horizon / 2, width, horizon, this.track.panoramaKey).setDepth(0);
+    const panoTex = this.textures.get(this.track.panoramaKey).getSourceImage();
     const panoScale = horizon / panoTex.height;
     this.pano.setTileScale(panoScale, panoScale);
 
@@ -145,10 +240,13 @@ export class KartScene extends Phaser.Scene {
 
     // Sprite-Pools für Streckendeko
     for (let i = 0; i < 16; i++) {
-      this.treePool.push(this.add.image(0, 0, "kart-tree-0").setVisible(false).setOrigin(0.5, 1));
+      this.treePool.push(this.add.image(0, 0, this.track.trees[0].key).setVisible(false).setOrigin(0.5, 1));
     }
     for (let i = 0; i < 6; i++) {
       this.billboardPool.push(this.add.image(0, 0, "billboard").setVisible(false).setOrigin(0.5, 1));
+    }
+    for (let i = 0; i < 6; i++) {
+      this.itemIconPool.push(this.add.image(0, 0, "icon-turbo").setVisible(false).setOrigin(0.5, 0.8).setDepth(6));
     }
 
     this.road = this.add.graphics().setDepth(1);
@@ -193,6 +291,7 @@ export class KartScene extends Phaser.Scene {
     this.input.on("pointerup", () => this.registry.set("touch-x", null));
 
     this.engine.start(this);
+    playMusic(this, "kart", 0.22);
 
     // Countdown
     this.countdownUntil = this.time.now + 3000;
@@ -237,17 +336,18 @@ export class KartScene extends Phaser.Scene {
   // ── Strecken-Mathematik ───────────────────────────────────────
 
   private curveAt(d: number): number {
-    let pos = ((d % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
-    for (let i = 0; i < TRACK_SEGMENTS.length; i++) {
-      const [len, curve] = TRACK_SEGMENTS[i];
+    const segs = this.track.segments;
+    let pos = ((d % this.trackLength) + this.trackLength) % this.trackLength;
+    for (let i = 0; i < segs.length; i++) {
+      const [len, curve] = segs[i];
       if (pos < len) {
         const t = pos / len;
         if (t < 0.15) {
-          const [, prev] = TRACK_SEGMENTS[(i - 1 + TRACK_SEGMENTS.length) % TRACK_SEGMENTS.length];
+          const [, prev] = segs[(i - 1 + segs.length) % segs.length];
           return Phaser.Math.Linear(prev, curve, t / 0.15);
         }
         if (t > 0.85) {
-          const [, next] = TRACK_SEGMENTS[(i + 1) % TRACK_SEGMENTS.length];
+          const [, next] = segs[(i + 1) % segs.length];
           return Phaser.Math.Linear(curve, next, (t - 0.85) / 0.15);
         }
         return curve;
@@ -259,45 +359,68 @@ export class KartScene extends Phaser.Scene {
 
   /** Signierter Abstand Objekt↔Spieler, rundenzyklisch auf ±halbe Runde normiert. */
   private gapTo(objDist: number): number {
-    const raw = (((objDist - this.dist) % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH; // 0..T
-    return raw > TRACK_LENGTH / 2 ? raw - TRACK_LENGTH : raw;
+    const T = this.trackLength;
+    const raw = (((objDist - this.dist) % T) + T) % T; // 0..T
+    return raw > T / 2 ? raw - T : raw;
   }
 
   /** Hat der Spieler in diesem Frame die Runden-Position `d` durchfahren? */
   private crossed(d: number): boolean {
-    const T = TRACK_LENGTH;
+    const T = this.trackLength;
     const a = ((this.prevDist % T) + T) % T;
     const b = ((this.dist % T) + T) % T;
     return a <= b ? d > a && d <= b : d > a || d <= b;
   }
 
-  /** Zeilen-Cache des aktuellen Frames (von renderRoad befüllt). */
-  private rows: { z: number; center: number; w: number; p: number; y: number }[] = [];
   private horizonY = 0;
-  /** Höhe einer Renderzeile in px (fein = flüssige Sprite-Bewegung). */
+  /** Höhe einer Renderzeile in px (nur fürs Straßen-Polygon-Raster). */
   private static readonly ROW_STEP = 2;
-
   /**
-   * Weiche Projektion für Sprites: kontinuierliches y/p und zwischen den
-   * Renderzeilen INTERPOLIERTE Streckenmitte/-breite — kein Raster-Ruckeln.
+   * Kurvenversatz-Tabelle: fein und GLEICHMÄSSIG in Weltdistanz gesampelt
+   * (nicht in Bildschirm-Zeilen). Das ist der Kern des Anti-Ruckel-Fixes:
+   * vorher wurde die Kurve pro Bildzeile akkumuliert, und bei fernen Zeilen
+   * (nahe Horizont) deckt eine 2-px-Zeile hunderte Weltdistanz-Einheiten ab
+   * → grobe, instabile Interpolation genau bei weit entfernten Objekten.
+   * Jetzt: eine einzige, feine Tabelle pro Frame, von Straße UND Sprites
+   * gleichermaßen per exaktem z-Lookup abgefragt → überall gleich glatt.
    */
+  private static readonly CURVE_DZ = 6;
+  // Einmal allokiert, jeden Frame nur befüllt — eine Neuallokation pro Frame
+  // erzeugte periodischen GC-Druck (sichtbar als Ruckeln alle paar Frames,
+  // unabhängig von der Kurven-Mathematik selbst).
+  private curveTable: Float32Array = new Float32Array(Math.ceil(DRAW_DIST / KartScene.CURVE_DZ) + 2);
+
+  private buildCurveTable(): void {
+    const table = this.curveTable;
+    let dx = 0;
+    let xoff = 0;
+    for (let i = 1; i < table.length; i++) {
+      const z = i * KartScene.CURVE_DZ;
+      dx += this.curveAt(this.dist + z) * KartScene.CURVE_DZ * 0.0007;
+      xoff += dx * KartScene.CURVE_DZ * 0.35;
+      table[i] = xoff;
+    }
+  }
+
+  private curveOffsetAt(z: number): number {
+    const table = this.curveTable;
+    const idx = Phaser.Math.Clamp(z / KartScene.CURVE_DZ, 0, table.length - 1);
+    const i0 = Math.floor(idx);
+    const i1 = Math.min(i0 + 1, table.length - 1);
+    const t = idx - i0;
+    return table[i0] + (table[i1] - table[i0]) * t;
+  }
+
+  /** Exakte Projektion für ein beliebiges z — keine Zeilen-Rasterung, kein Ruckeln. */
   private projectSmooth(z: number) {
-    if (!this.rows.length) return null;
-    const { height } = this.scale;
+    const { width, height } = this.scale;
     const p = NEAR / (NEAR + z);
     const y = this.horizonY + (height - this.horizonY) * p;
-    const fidx = (height - y) / KartScene.ROW_STEP;
-    const i0 = Math.floor(fidx);
-    if (i0 < 0 || i0 >= this.rows.length) return null;
-    const i1 = Math.min(i0 + 1, this.rows.length - 1);
-    const t = Phaser.Math.Clamp(fidx - i0, 0, 1);
-    const a = this.rows[i0];
-    const b = this.rows[i1];
     return {
       p,
       y,
-      center: a.center + (b.center - a.center) * t,
-      w: a.w + (b.w - a.w) * t,
+      center: width / 2 + this.curveOffsetAt(z) - this.playerX * p * width * 0.3,
+      w: width * 0.9 * p + 30,
     };
   }
 
@@ -349,25 +472,23 @@ export class KartScene extends Phaser.Scene {
     );
 
     // Runden & Ziel
-    if (racing && Math.floor(this.prevDist / TRACK_LENGTH) < Math.floor(this.dist / TRACK_LENGTH)) {
+    if (racing && Math.floor(this.prevDist / this.trackLength) < Math.floor(this.dist / this.trackLength)) {
       this.lap += 1;
       this.collectedBoxes.clear();
       if (this.lap > LAPS) this.finishRace();
     }
 
     // Items & Boost-Pads: Durchfahrts-Check (kein Verpassen bei hohem Tempo)
-    for (const box of ITEM_BOXES) {
+    for (const box of this.itemBoxes) {
       if (this.collectedBoxes.has(box.d)) continue;
       if (this.crossed(box.d) && Math.abs(this.playerX - box.x) < 0.45) {
         this.collectedBoxes.add(box.d);
         sfx(this, "coin", 0.35);
-        if (!this.item) {
-          const pool: ItemKind[] = ["turbo", "shield", "zap"];
-          this.item = pool[Math.floor(Math.random() * pool.length)];
-        }
+        // Die Box zeigt vorher schon ihr Icon → deterministisch statt zufällig
+        if (!this.item) this.item = box.kind;
       }
     }
-    for (const pad of BOOST_PADS) {
+    for (const pad of this.boostPads) {
       if (this.crossed(pad.d) && Math.abs(this.playerX - pad.x) < 0.5) {
         if (now >= this.turboUntil) sfx(this, "boost", 0.35);
         this.turboUntil = Math.max(this.turboUntil, now + 700);
@@ -422,7 +543,7 @@ export class KartScene extends Phaser.Scene {
 
     const rank = 1 + this.opponents.filter((o) => o.dist > this.dist).length;
     this.hud.setText(
-      `${this.brand.name}  |  Runde ${Math.min(this.lap, LAPS)}/${LAPS}  |  Platz ${rank}/${this.opponents.length + 1}  |  ${Math.round(this.speed / 9)} km/h${this.drifting ? "  |  DRIFT" : ""}`
+      `${this.brand.name}  |  ${this.track.name}  |  Runde ${Math.min(this.lap, LAPS)}/${LAPS}  |  Platz ${rank}/${this.opponents.length + 1}  |  ${Math.round(this.speed / 9)} km/h${this.drifting ? "  |  DRIFT" : ""}`
     );
     this.itemHud.setText(this.item ? `${ITEM_LABEL[this.item]} [SPACE]` : "");
   }
@@ -461,18 +582,13 @@ export class KartScene extends Phaser.Scene {
       })
       .setOrigin(0.5).setDepth(12);
     this.time.delayedCall(600, () => {
-      this.input.once("pointerdown", () => this.scene.restart({ brand: this.brand }));
-      this.input.keyboard!.once("keydown", () => this.scene.restart({ brand: this.brand }));
+      this.input.once("pointerdown", () => this.scene.restart({ brand: this.brand, trackId: this.track.id }));
+      this.input.keyboard!.once("keydown", () => this.scene.restart({ brand: this.brand, trackId: this.track.id }));
     });
   }
 
   // ── Rendering ─────────────────────────────────────────────────
 
-  /**
-   * Perspektivisch korrekte Zeilen-Projektion: pro 3-px-Bildzeile wird der
-   * Weltabstand z = NEAR·(1-p)/p bestimmt. Dadurch ist die Zuordnung
-   * Bildzeile → Streckenposition stetig → kein Flackern der Streifen.
-   */
   private renderRoad(width: number, height: number, horizon: number, curve: number, now: number) {
     const g = this.road;
     g.clear();
@@ -485,16 +601,14 @@ export class KartScene extends Phaser.Scene {
       const b = (c1 & 255) + ((c2 & 255) - (c1 & 255)) * t;
       return (Math.round(r) << 16) | (Math.round(gg) << 8) | Math.round(b);
     };
-    const GRASS_FAR = 0x89bb3d; // Bodenfarbe des Panoramas → nahtloser Übergang
-    const HAZE = 0x93ab84;      // Dunst für Fahrbahn/Curbs: entsättigtes Graugrün
+    const GRASS_FAR = this.track.groundColor; // aus dem Panorama gesampelt → nahtloser Übergang
+    const HAZE = mix(GRASS_FAR, 0x888888, 0.35); // Dunst für Fahrbahn/Curbs
 
-    // Kurve wird über die Distanz INTEGRIERT (OutRun-Verfahren):
-    // dadurch biegt die Straße stetig ab, statt an Segmentgrenzen zu zerreißen.
+    // Kurvenversatz kommt aus der fein/gleichmäßig gesampelten Tabelle (s.o.) —
+    // Straße und Sprites nutzen exakt dieselbe Funktion, dadurch passt beides
+    // immer zusammen und nichts ruckelt, auch nicht in der Ferne.
     this.horizonY = horizon;
-    this.rows = [];
-    let dx = 0;
-    let xoff = 0;
-    let prevZ = 0;
+    this.buildCurveTable();
 
     for (let y = height; y > horizon; y -= step) {
       const p = (y - horizon) / (height - horizon); // 1 = unten/nah
@@ -505,62 +619,47 @@ export class KartScene extends Phaser.Scene {
         g.fillRect(0, y - step, width, step);
         continue;
       }
-      const dz = z - prevZ;
-      prevZ = z;
       const fog = Math.pow(z / DRAW_DIST, 1.6) * 0.75; // Distanz-Dunst
       const rowDist = this.dist + z;
-      const rowLapPos = ((rowDist % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
+      const rowLapPos = ((rowDist % this.trackLength) + this.trackLength) % this.trackLength;
       const stripe = Math.floor(rowDist / STRIPE_LEN) % 2 === 0;
 
-      dx += this.curveAt(rowDist) * dz * 0.0007;
-      xoff += dx * dz * 0.35;
-      const proj = {
-        p,
-        center: width / 2 + xoff - this.playerX * p * width * 0.3,
-        w: width * 0.9 * p + 30,
-      };
-      this.rows.push({ z, center: proj.center, w: proj.w, p, y });
+      // Kein Objekt-Literal pro Zeile (vermeidet GC-Druck bei ~190 Zeilen/Frame)
+      const pCenter = width / 2 + this.curveOffsetAt(z) - this.playerX * p * width * 0.3;
+      const pW = width * 0.9 * p + 30;
 
-      // Gras: dezente zweifarbige Streifen → Geschwindigkeitsgefühl
-      g.fillStyle(mix(stripe ? 0x5aa844 : 0x52a13e, GRASS_FAR, fog), 1);
+      // Untergrund: dezente zweifarbige Streifen → Geschwindigkeitsgefühl
+      g.fillStyle(mix(mix(GRASS_FAR, 0x000000, stripe ? 0.08 : 0.14), GRASS_FAR, fog), 1);
       g.fillRect(0, y - step, width, step);
 
       // Fahrbahn (Start/Ziel als Schachbrett-Band)
       const isFinish = rowLapPos < 50;
       if (isFinish) {
         const cells = 8;
-        const cw = proj.w / cells;
+        const cw = pW / cells;
         for (let c = 0; c < cells; c++) {
           g.fillStyle(mix((c + (stripe ? 0 : 1)) % 2 === 0 ? 0xf0f0f0 : 0x222222, HAZE, fog), 1);
-          g.fillRect(proj.center - proj.w / 2 + c * cw, y - step, cw, step);
+          g.fillRect(pCenter - pW / 2 + c * cw, y - step, cw, step);
         }
       } else {
         // Asphalt mit leichtem Struktur-Rauschen (wirkt texturiert statt flach)
         const noise = Math.abs(Math.sin(rowDist * 12.9898) * 43758.5453 % 1);
         const asphalt = mix(stripe ? 0x4a4a55 : 0x50505c, 0x33333d, noise * 0.3);
         g.fillStyle(mix(asphalt, HAZE, fog), 1);
-        g.fillRect(proj.center - proj.w / 2, y - step, proj.w, step);
+        g.fillRect(pCenter - pW / 2, y - step, pW, step);
         // Zwei gestrichelte Fahrspur-Linien
         if (stripe) {
           g.fillStyle(mix(0xe8e8e8, HAZE, fog), 0.75);
-          g.fillRect(proj.center - proj.w * 0.27 - proj.w * 0.006, y - step, proj.w * 0.012, step);
-          g.fillRect(proj.center + proj.w * 0.27 - proj.w * 0.006, y - step, proj.w * 0.012, step);
-        }
-      }
-
-      // Boost-Pads als Band in Markenfarbe
-      for (const pad of BOOST_PADS) {
-        if (Math.abs(rowLapPos - pad.d) < 40) {
-          g.fillStyle(mix(accent, HAZE, fog), 0.9);
-          g.fillRect(proj.center + pad.x * proj.w * 0.5 - proj.w * 0.09, y - step, proj.w * 0.18, step);
+          g.fillRect(pCenter - pW * 0.27 - pW * 0.006, y - step, pW * 0.012, step);
+          g.fillRect(pCenter + pW * 0.27 - pW * 0.006, y - step, pW * 0.012, step);
         }
       }
 
       // Randstreifen (Curbs) rot/weiß
       g.fillStyle(mix(stripe ? 0xffffff : 0xd94848, HAZE, fog), 1);
       const edge = Math.max(2, 12 * p);
-      g.fillRect(proj.center - proj.w / 2 - edge, y - step, edge, step);
-      g.fillRect(proj.center + proj.w / 2, y - step, edge, step);
+      g.fillRect(pCenter - pW / 2 - edge, y - step, edge, step);
+      g.fillRect(pCenter + pW / 2, y - step, edge, step);
     }
 
     // Szenerie & schwebende Objekte (weit → nah gezeichnet)
@@ -568,38 +667,44 @@ export class KartScene extends Phaser.Scene {
     ov.clear();
 
     // Bäume/Büsche am Streckenrand: KI-Sprites aus dem Pool, perspektivisch skaliert
+    // Detaillierte Sprites (Bäume/Banden) werden kürzer sichtbar gehalten als
+    // die Straße selbst: bei extremer Verkleinerung (winzige, weit entfernte
+    // Instanzen) flimmern/"kribbeln" texturierte Sprites durch Sub-Pixel-
+    // Sampling am stärksten — genau das wahrgenommene Ruckeln "in der Ferne".
+    // Kürzerer Cutoff + Ausblendung entfernt die anfälligsten Instanzen.
+    const DECOR_DIST = DRAW_DIST * 0.62;
+    const trees = this.track.trees;
     let ti = 0;
     const firstTree = Math.ceil(this.dist / 170) * 170;
-    for (let d = firstTree + DRAW_DIST; d >= firstTree; d -= 170) {
+    for (let d = firstTree + DECOR_DIST; d >= firstTree; d -= 170) {
       const z = d - this.dist;
-      if (z <= 10 || z > DRAW_DIST * 0.92 || ti >= this.treePool.length) continue;
+      if (z <= 10 || z > DECOR_DIST || ti >= this.treePool.length) continue;
       const proj = this.projectSmooth(z);
       if (!proj) continue;
       const n = Math.floor(d / 170);
-      const type = [0, 1, 2, 0, 2, 1, 2][n % 7]; // Laubbaum/Nadelbaum/Busch gemischt
+      const tree = trees[n % trees.length];
       const side = n % 2 === 0 ? -1 : 1;
       const lateral = side * (1.35 + ((n * 7) % 4) * 0.22);
-      const baseH = type === 2 ? 120 : 300; // Büsche kleiner als Bäume
       const img = this.treePool[ti++];
       img
-        .setTexture(`kart-tree-${type}`)
+        .setTexture(tree.key)
         .setVisible(true)
         .setPosition(proj.center + lateral * proj.w * 0.5, proj.y + 4)
         .setDepth(1.5 + proj.p * 1.4)
-        .setAlpha(Phaser.Math.Clamp((DRAW_DIST * 0.92 - z) / 350, 0, 1)); // sanft einblenden
-      img.setScale((baseH * proj.p) / img.height);
+        .setAlpha(Phaser.Math.Clamp((DECOR_DIST - z) / 300, 0, 1)); // sanft einblenden
+      img.setScale((tree.height * proj.p) / img.height);
       ov.fillStyle(0x000000, 0.18 * proj.p);
-      ov.fillEllipse(img.x, proj.y + 4, baseH * 0.5 * proj.p, baseH * 0.09 * proj.p);
+      ov.fillEllipse(img.x, proj.y + 4, tree.height * 0.5 * proj.p, tree.height * 0.09 * proj.p);
     }
     for (let i = ti; i < this.treePool.length; i++) this.treePool[i].setVisible(false);
 
     // Werbebanden in Markenfarbe (im Pitch: „Hier steht Ihr Logo")
     let bi = 0;
-    const lapPosB = ((this.dist % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
-    for (const bb of BILLBOARDS) {
+    const lapPosB = ((this.dist % this.trackLength) + this.trackLength) % this.trackLength;
+    for (const bb of this.billboards) {
       if (bi >= this.billboardPool.length) break;
-      const gap = (((bb.d - lapPosB) % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
-      if (gap <= 10 || gap > DRAW_DIST * 0.92) continue;
+      const gap = (((bb.d - lapPosB) % this.trackLength) + this.trackLength) % this.trackLength;
+      if (gap <= 10 || gap > DECOR_DIST) continue;
       const proj = this.projectSmooth(gap);
       if (!proj) continue;
       const img = this.billboardPool[bi++];
@@ -607,32 +712,65 @@ export class KartScene extends Phaser.Scene {
         .setVisible(true)
         .setPosition(proj.center + bb.side * 1.45 * proj.w * 0.5, proj.y + 4)
         .setDepth(1.5 + proj.p * 1.4)
-        .setAlpha(Phaser.Math.Clamp((DRAW_DIST * 0.92 - gap) / 350, 0, 1)); // sanft einblenden
+        .setAlpha(Phaser.Math.Clamp((DECOR_DIST - gap) / 300, 0, 1)); // sanft einblenden
       img.setScale((240 * proj.p) / img.height);
     }
     for (let i = bi; i < this.billboardPool.length; i++) this.billboardPool[i].setVisible(false);
 
-    // Item-Boxen als pulsierende Rauten
-    const lapPos = ((this.dist % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
-    for (const box of ITEM_BOXES) {
-      if (this.collectedBoxes.has(box.d)) continue;
-      const gap = (((box.d - lapPos) % TRACK_LENGTH) + TRACK_LENGTH) % TRACK_LENGTH;
+    // Boost-Pads: gut lesbare Vorwärts-Pfeile (Chevrons) auf dem Asphalt statt
+    // einer unklaren einfarbigen Fläche — universelle „hier gibt's Speed"-Optik.
+    for (const pad of this.boostPads) {
+      const gap = (((pad.d - lapPosB) % this.trackLength) + this.trackLength) % this.trackLength;
+      if (gap <= 10 || gap > DRAW_DIST * 0.92) continue;
+      const proj = this.projectSmooth(gap);
+      if (!proj) continue;
+      const alpha = Phaser.Math.Clamp((DRAW_DIST * 0.92 - gap) / 350, 0, 1);
+      const cx = proj.center + pad.x * proj.w * 0.5;
+      const chevronW = proj.w * 0.22;
+      const chevronH = proj.w * 0.16;
+      const pulse = (now / 220 + gap * 0.01) % 1; // Pfeile "laufen" nach vorn → Bewegungsrichtung klar
+      for (let k = 0; k < 3; k++) {
+        const t = (k + pulse) / 3;
+        const cy = proj.y - t * proj.p * 90;
+        const s = 1 - t * 0.35;
+        ov.fillStyle(accent, alpha * (1 - t) * 0.95);
+        ov.fillTriangle(
+          cx, cy - chevronH * s,
+          cx - chevronW * s, cy + chevronH * 0.5 * s,
+          cx + chevronW * s, cy + chevronH * 0.5 * s
+        );
+        ov.lineStyle(Math.max(1, 2 * proj.p), 0xffffff, alpha * (1 - t) * 0.9);
+        ov.strokeTriangle(
+          cx, cy - chevronH * s,
+          cx - chevronW * s, cy + chevronH * 0.5 * s,
+          cx + chevronW * s, cy + chevronH * 0.5 * s
+        );
+      }
+    }
+
+    // Item-Boxen: zeigen ihr Power-up-Icon (deterministisch, kein Ratespiel)
+    let ii = 0;
+    for (const box of this.itemBoxes) {
+      if (this.collectedBoxes.has(box.d) || ii >= this.itemIconPool.length) continue;
+      const gap = (((box.d - lapPosB) % this.trackLength) + this.trackLength) % this.trackLength;
       if (gap <= 0 || gap > DRAW_DIST * 0.92) continue;
       const proj = this.projectSmooth(gap);
       if (!proj) continue;
-      const y = proj.y;
-      const x = proj.center + box.x * proj.w * 0.5;
-      const size = 5 + proj.p * 24;
-      const pulse = 0.85 + 0.15 * Math.sin(now / 150 + box.d);
-      const pts = [
-        { x, y: y - size - size }, { x: x + size, y: y - size },
-        { x, y }, { x: x - size, y: y - size },
-      ];
-      ov.fillStyle(accent, pulse);
-      ov.fillPoints(pts, true);
-      ov.lineStyle(2, 0xffffff, 0.9);
-      ov.strokePoints(pts, true, true);
+      const pulse = 1 + 0.08 * Math.sin(now / 200 + box.d);
+      const bob = Math.sin(now / 260 + box.d) * 6 * proj.p;
+      const img = this.itemIconPool[ii++];
+      img
+        .setTexture(`icon-${box.kind}`)
+        .setVisible(true)
+        .setPosition(proj.center + box.x * proj.w * 0.5, proj.y - 10 * proj.p + bob)
+        .setDepth(1.5 + proj.p * 1.4)
+        .setAlpha(Phaser.Math.Clamp((DRAW_DIST * 0.92 - gap) / 350, 0, 1));
+      img.setScale((60 * proj.p * pulse) / img.height);
+      // Sockel-Schatten, damit das Icon sichtbar "auf" der Strecke steht
+      ov.fillStyle(0x000000, 0.25 * proj.p);
+      ov.fillEllipse(img.x, proj.y + 3, 26 * proj.p, 7 * proj.p);
     }
+    for (let i = ii; i < this.itemIconPool.length; i++) this.itemIconPool[i].setVisible(false);
 
     // KI-Karts
     const sorted = [...this.opponents].sort((a, b) => this.gapTo(b.dist) - this.gapTo(a.dist));

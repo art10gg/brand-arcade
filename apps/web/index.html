@@ -24,8 +24,9 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        position: relative;
       }
-      #menu { text-align: center; padding: 24px; }
+      #menu { text-align: center; padding: 24px; position: relative; }
       #menu h1 { margin-bottom: 8px; }
       #menu p { opacity: 0.7; margin-bottom: 24px; }
       #menu button {
@@ -41,18 +42,149 @@
         cursor: pointer;
       }
       #menu button:active { transform: scale(0.97); }
+      #back-btn { background: transparent; border: 1px solid rgba(255,255,255,0.3) !important; margin-top: 20px !important; }
+
+      #options-btn {
+        position: fixed;
+        top: 18px;
+        right: 18px;
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(255,255,255,0.12);
+        color: #fff;
+        font-size: 22px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #options-btn:hover { background: rgba(255,255,255,0.22); }
+
+      #track-list { display: none; }
+      .track-btn {
+        display: flex !important;
+        align-items: center;
+        gap: 12px;
+        text-align: left;
+      }
+      .track-swatch {
+        width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+        border: 2px solid rgba(255,255,255,0.5);
+      }
+
       #game { width: 100%; height: 100dvh; display: none; }
       #game canvas { display: block; margin: 0 auto; }
+
+      .modal-overlay {
+        display: none;
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.6);
+        align-items: center; justify-content: center;
+        z-index: 50;
+      }
+      .modal-overlay.open { display: flex; }
+      .modal {
+        background: #232336;
+        border-radius: 16px;
+        padding: 24px 28px;
+        width: min(420px, 90vw);
+        max-height: 85vh;
+        overflow-y: auto;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+      }
+      .modal h2 { margin-bottom: 18px; font-size: 20px; }
+      .modal-close {
+        float: right;
+        background: none; border: none; color: #aaa;
+        font-size: 22px; cursor: pointer; line-height: 1;
+      }
+      .toggle-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.08);
+      }
+      .toggle-row:last-of-type { border-bottom: none; }
+      .switch { position: relative; width: 48px; height: 26px; flex-shrink: 0; }
+      .switch input { opacity: 0; width: 0; height: 0; }
+      .slider {
+        position: absolute; inset: 0; background: #555; border-radius: 999px;
+        cursor: pointer; transition: background 0.15s;
+      }
+      .slider::before {
+        content: ""; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px;
+        background: #fff; border-radius: 50%; transition: transform 0.15s;
+      }
+      .switch input:checked + .slider { background: var(--brand-primary); }
+      .switch input:checked + .slider::before { transform: translateX(22px); }
+
+      .controls-section { margin-top: 20px; }
+      .controls-section h3 { font-size: 15px; opacity: 0.85; margin: 16px 0 8px; }
+      .controls-section ul { list-style: none; }
+      .controls-section li {
+        display: flex; justify-content: space-between;
+        padding: 5px 0; font-size: 14px; color: #ddd;
+      }
+      .controls-section kbd {
+        background: #3a3a52; border: 1px solid #4d4d6a; border-radius: 5px;
+        padding: 2px 8px; font-family: inherit; font-size: 13px;
+      }
     </style>
   </head>
   <body>
+    <button id="options-btn" title="Optionen" aria-label="Optionen">⚙️</button>
+
     <div id="menu">
       <h1 id="brand-title">Brand Arcade</h1>
       <p id="brand-sub">Wähle ein Spiel</p>
-      <button data-game="platformer">🏃 Jump'n'Run</button>
-      <button data-game="kart">🏎️ Kart-Rennen</button>
+      <div id="main-buttons">
+        <button data-game="platformer">🏃 Jump'n'Run</button>
+        <button id="kart-btn">🏎️ Kart-Rennen</button>
+      </div>
+      <div id="track-list">
+        <!-- Strecken-Buttons werden per JS eingefügt -->
+        <button id="back-btn">← Zurück</button>
+      </div>
     </div>
     <div id="game"></div>
+
+    <div class="modal-overlay" id="options-overlay">
+      <div class="modal">
+        <button class="modal-close" id="options-close">✕</button>
+        <h2>Optionen</h2>
+        <div class="toggle-row">
+          <span>🔊 Ton (Effekte)</span>
+          <label class="switch">
+            <input type="checkbox" id="sound-toggle" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span>🎵 Musik</span>
+          <label class="switch">
+            <input type="checkbox" id="music-toggle" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="controls-section">
+          <h3>🏃 Jump'n'Run — Steuerung</h3>
+          <ul>
+            <li><span>Laufen</span><kbd>← →</kbd></li>
+            <li><span>Springen</span><kbd>↑ / Leertaste</kbd></li>
+            <li><span>Touch</span><span>Linkes/rechtes Drittel = Laufen, Mitte = Springen</span></li>
+          </ul>
+          <h3>🏎️ Kart-Rennen — Steuerung</h3>
+          <ul>
+            <li><span>Lenken</span><kbd>← →</kbd></li>
+            <li><span>Gas</span><kbd>↑</kbd></li>
+            <li><span>Drift / Mini-Turbo</span><kbd>X</kbd></li>
+            <li><span>Item einsetzen</span><kbd>Leertaste</kbd></li>
+            <li><span>Touch</span><span>Halten = Gas, links/rechts lenken</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

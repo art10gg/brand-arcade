@@ -5,7 +5,9 @@ import {
   createAvatar,
   playAvatarAnim,
   preloadAvatar,
+  preloadMusic,
   preloadSfx,
+  playMusic,
   sfx,
 } from "@platform/core";
 
@@ -149,6 +151,7 @@ export class PlatformerScene extends Phaser.Scene {
   preload() {
     preloadAvatar(this, this.brand, "platformer");
     preloadSfx(this, ["jump", "coin", "stomp", "hit", "bounce", "win", "gameover"]);
+    preloadMusic(this, "platformer");
     this.load.spritesheet("k-tiles", "assets/platformer/tilemap_packed.png", {
       frameWidth: KENNEY_TILE, frameHeight: KENNEY_TILE,
     });
@@ -314,6 +317,7 @@ export class PlatformerScene extends Phaser.Scene {
 
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.addTouchControls();
+    playMusic(this, "platformer", 0.2);
   }
 
   update(time: number) {
